@@ -64,19 +64,46 @@ Wiring connections between the Shrike-Fi board, 8-channel IR sensor bar, L298N d
 
 ---
 
-### 2.2 L298N Motor Driver to Shrike-Fi
+### 2.2 Motor Driver Interface (FPGA-Primary Co-Design)
 
-| L298N Terminal | Shrike-Fi / Power Pin | Function | Notes |
+The robot uses an **FPGA-primary control architecture**:
+- Real-time ultrasonic motor PWM waveforms (~19.53 kHz) are generated directly in **hardware RTL on the ForgeFPGA** and routed out via PMOD connector **J5**.
+- Motor direction signals (IN1..IN4) and system supervisor gating are controlled by the ESP32-S3.
+
+#### PMOD Connector J5 Pin Mapping (SLG47910 Verified Wiring)
+
+| PMOD J5 Pin | FPGA Net Name | SLG47910 Package Pin | Function / Destination | Notes |
+|:---:|:---:|:---:|:---|:---|
+| **Pin 1** | `+3.3V` | VDDIO Rail | Logic Power (3.3V) | Power Rail |
+| **Pin 2** | `+3.3V` | VDDIO Rail | Logic Power (3.3V) | Power Rail |
+| **Pin 3** | `GND` | Ground Rail | Common Signal Ground | Power Rail |
+| **Pin 4** | `GND` | Ground Rail | Common Signal Ground | Power Rail |
+| **Pin 5** | `F_GPIO9` | **Pin 24** | **`pwm_left_out` -> L298N ENA** | Left Motor Hardware PWM (19.53 kHz) |
+| **Pin 6** | `F_GPIO8` | **Pin 23** | **`pwm_right_out` -> L298N ENB** | Right Motor Hardware PWM (19.53 kHz) |
+| **Pin 7** | `F_GPIO11` | **Pin 2** | **`motor_en_out`** | Hardware Safety E-Stop (Active-High) |
+| **Pin 8** | `F_GPIO10` | **Pin 1** | `spare_gpio` | Spare / Status telemetry indicator |
+| **Pin 9** | `F_GPIO13` | **Pin 4** | *ESP32 SPI_SS (GPIO 10)* | **DO NOT WIRE (Internal SPI Bus)** |
+| **Pin 10** | `F_GPIO12` | **Pin 3** | *ESP32 SPI_SCLK (GPIO 12)* | **DO NOT WIRE (Internal SPI Bus)** |
+| **Pin 11** | `F_GPIO15` | **Pin 6** | *ESP32 SPI_MISO (GPIO 13)* | **DO NOT WIRE (Internal SPI Bus)** |
+| **Pin 12** | `F_GPIO14` | **Pin 5** | *ESP32 SPI_MOSI (GPIO 11)* | **DO NOT WIRE (Internal SPI Bus)** |
+
+> [!WARNING]
+> PMOD pins 9 through 12 are hardwired on the PCB to the ESP32-to-FPGA SPI communication bus. Never attach external sensors or motor leads to PMOD pins 9..12!
+
+#### L298N Terminal Connections
+
+| L298N Terminal | Source Pin | Function | Notes |
 |:---:|:---:|:---|:---|
 | **VCC (+12V)** | Battery Positive (+) via Switch | Motor Power (7.4V – 8.4V) | Connect through 3A Fuse |
 | **GND** | Common Ground | Ground Reference | Must be tied to Shrike-Fi GND |
-| **5V Terminal** | NC (Not Connected) | L298N internal logic | Remove jumper if powered externally |
-| **ENA** | **GPIO 38** | Left Motor PWM Speed | ESP32 LEDC Channel 0 (20 kHz) |
-| **IN1** | **GPIO 17** | Left Motor Direction A | Digital Output |
-| **IN2** | **GPIO 18** | Left Motor Direction B | Digital Output |
-| **IN3** | **GPIO 40** | Right Motor Direction A | Digital Output |
-| **IN4** | **GPIO 41** | Right Motor Direction B | Digital Output |
-| **ENB** | **GPIO 39** | Right Motor PWM Speed | ESP32 LEDC Channel 1 (20 kHz) |
+| **5V Terminal** | NC (Not Connected) | L298N internal logic | Remove jumper if 5V fed externally |
+| **ENA** | **PMOD J5 Pin 5** (FPGA Pin 24) | Left Motor PWM Speed | Hardware PWM directly from FPGA |
+| **IN1** | **ESP32 GPIO 17** | Left Motor Direction A | Digital Output (High for Fwd) |
+| **IN2** | **ESP32 GPIO 18** | Left Motor Direction B | Digital Output (Low for Fwd) |
+| **IN3** | **ESP32 GPIO 40** | Right Motor Direction A | Digital Output (High for Fwd) |
+| **IN4** | **ESP32 GPIO 41** | Right Motor Direction B | Digital Output (Low for Fwd) |
+| **ENB** | **PMOD J5 Pin 6** (FPGA Pin 23) | Right Motor PWM Speed | Hardware PWM directly from FPGA |
+
 
 ---
 

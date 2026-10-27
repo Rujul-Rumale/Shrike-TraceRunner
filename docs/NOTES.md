@@ -9,25 +9,44 @@ Quick collection of notes, architecture details, and troubleshooting tips for th
 The FPGA implementation runs on the Renesas ForgeFPGA SLG47910 (BB silicon) on the Shrike-Fi board.
 
 - **Clock**: 50 MHz internal oscillator (`OSC_CLK`).
-- **Control loop latency**: ~20 ns (1 clock cycle for combinational centroid + pipelined PID math).
-- **Yosys synthesis stats**:
-  - `pid_top`: 184 cells (~35% of the 1,120 LUT5 capacity on SLG47910).
-  - Multipliers: 3 inferred `$mul` primitives for $K_p \cdot e$, $K_i \cdot \int e$, $K_d \cdot \Delta e$.
-  - Scaling: Arithmetic right shift by 4 (`SCALE_SHIFT = 4`), dividing raw PID sum by 16 without needing a divider block.
-  - Anti-windup: Clamps accumulator at $\pm 511$.
-  - Line lost recovery: If all sensors read 0, asserts `LINE_LOST` and uses last-known error direction to pivot at `SEARCH_SPEED` (60) until the line is recaptured.
+- **PWM Carrier Frequency**:
+  - Formula: $f_{PWM} = \frac{50\text{ MHz}}{\text{PRESCALER} \times 2^{\text{WIDTH}}} = \frac{50\text{ MHz}}{10 \times 256} = 19.53125\text{ kHz}$.
+  - Ultrasonic carrier eliminates motor coil whine.
+- **Duty Cycle Endpoints**:
+  - `duty = 0`: strictly 0% (continuous low, motor stopped).
+  - `duty = 255`: 255/256 = 99.6% high (full speed).
+  - `enable = 0`: forces PWM immediately to 0.
+- **Resource Analysis (Generic Yosys AST vs Vendor Synthesis)**:
+  - *Generic Elaboration*: 212 abstract AST cells (`$_DFF_`, `$add`, `$mux`, 3 unexpanded `$mul` primitives).
+  - *Vendor Technology Mapping (`synth_xilinx -nodsp` for EFLX-1K)*:
+    - Multipliers mapped to soft-logic carry adder arrays (no hard DSP blocks on SLG47910).
+    - Total Estimated Logic Cells: **637 LCs** out of 1,120 total capacity (**56.8% utilization**).
+    - Flip-Flops: 203.
+    - LUTs: 289 (LUT2: 77, LUT3: 28, LUT4: 20, LUT5: 41, LUT6: 123).
+    - Carry primitives (`CARRY4`): 40.
+- **Safety Interlocks**:
+  - `motor_en_out` (PMOD J5 Pin 7, Package Pin 2) is driven low during power-on reset and immediately trips low upon SPI parity error.
+  - Line lost recovery: When all 8 sensors read 0, asserts `LINE_LOST` and uses last-known error direction to pivot at `SEARCH_SPEED` (60) until the line is reacquired.
 
 ---
 
-## 2. SPI Protocol (ESP32-S3 <-> FPGA)
+## 2. SPI Protocol & Timing Feasibility (ESP32-S3 <-> FPGA)
 
 The Shrike-Fi connects the ESP32-S3 and ForgeFPGA via 4 dedicated SPI lines:
-- `SCK`: ESP32 GPIO 12 -> FPGA Pin 3
-- `SS_N`: ESP32 GPIO 10 -> FPGA Pin 4
-- `MOSI`: ESP32 GPIO 11 -> FPGA Pin 5
-- `MISO`: FPGA Pin 6 -> ESP32 GPIO 13
+- `SCK`: ESP32 GPIO 12 -> FPGA Pin 3 (PMOD J5 Pin 10)
+- `SS_N`: ESP32 GPIO 10 -> FPGA Pin 4 (PMOD J5 Pin 9)
+- `MOSI`: ESP32 GPIO 11 -> FPGA Pin 5 (PMOD J5 Pin 12)
+- `MISO`: FPGA Pin 6 -> ESP32 GPIO 13 (PMOD J5 Pin 11)
 
 Bus config: 2.0 MHz SPI clock, Mode 0 (`CPOL=0, CPHA=0`), MSB first.
+
+### 1 kHz Loop Feasibility:
+- A 4-byte SPI transaction at 2.0 MHz takes:
+  $$T_{\text{tx}} = \frac{32\text{ bits}}{2\text{ MHz}} = 16.0\,\mu\text{s}$$
+- In a 1 kHz (1,000 $\mu$s) control loop:
+  - SPI transmission overhead: $16\,\mu\text{s}$ (only **1.6% bus utilization**).
+  - Remaining CPU time for ESP32 sensor read and Wi-Fi handling: $984\,\mu\text{s}$ (98.4%).
+- Even at 1.0 MHz SPI clock, transaction time is $32\,\mu\text{s}$ (3.2% bus utilization). 1 kHz real-time deterministic updates are easily achieved with massive timing margin.
 
 ### Packet Format (4 bytes full-duplex per 1ms cycle)
 

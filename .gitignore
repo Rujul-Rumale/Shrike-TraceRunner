@@ -24,3 +24,8 @@ build/
 Thumbs.db
 [Dd]esktop.ini
 .DS_Store
+
+# Scratch scripts
+scratch_*.py
+trace_*.py
+

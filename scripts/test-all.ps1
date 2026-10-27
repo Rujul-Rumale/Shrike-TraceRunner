@@ -40,10 +40,11 @@ $rootDir = (Resolve-Path "$projDir\..\..").Path
 $srcDir  = "$projDir\ffpga\src"
 $testDir = "$projDir\tests"
 
-# 1. Golden Reference Model Unit Tests
-Run-Step "1. Python Golden PID Reference Model Tests" {
+# 1. Golden Reference Model Unit Tests & Waveform Simulation
+Run-Step "1. Python Golden PID Reference Model Tests & Waveform Simulation" {
     $out1 = python "$testDir\test_pid_golden.py" 2>&1
     $out2 = python "$testDir\test_pwm.py" 2>&1
+    $out3 = python "$projDir\scripts\generate_waveforms.py" 2>&1
     return ($LASTEXITCODE -eq 0)
 }
 
