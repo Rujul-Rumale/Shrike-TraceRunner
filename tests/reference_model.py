@@ -1,0 +1,165 @@
+"""
+Bit-Accurate Python Reference Model for ForgeFPGA PID Line Follower.
+Matches the exact register widths, signedness, arithmetic shifts, and saturation bounds of the Verilog RTL.
+"""
+
+class PIDReferenceModel:
+    def __init__(self, scale_shift=4, imax=511, search_speed=60):
+        self.scale_shift = scale_shift
+        self.imax = imax
+        self.search_speed = search_speed
+        self.reset()
+
+    def reset(self):
+        self.error_prev = 0
+        self.integral_acc = 0
+        self.steer_out = 0
+        self.inter_sat = False
+        self.steer_sat = False
+        self.last_dir = 0 # 0=Left, 1=Right
+
+    @staticmethod
+    def encode_line_position(sensors: int) -> tuple[int, bool]:
+        """
+        Calculates line position error (-7 to +7) from 8-bit sensor bitmask.
+        Returns (error, line_lost).
+        """
+        sensors &= 0xFF
+        if sensors == 0x00:
+            return 0, True
+
+        lookup = {
+            0b00000001:  7,
+            0b00000010:  5,
+            0b00000100:  3,
+            0b00001000:  1,
+            0b00010000: -1,
+            0b00100000: -3,
+            0b01000000: -5,
+            0b10000000: -7,
+            # Dual hits (interpolated centers)
+            0b00011000:  0,
+            0b00001100:  2,
+            0b00000110:  4,
+            0b00000011:  6,
+            0b00110000: -2,
+            0b01100000: -4,
+            0b11000000: -6,
+            # Triple hits
+            0b00111000: -1,
+            0b00011100:  1,
+            0b01110000: -3,
+            0b00001110:  3,
+            0b11100000: -5,
+            0b00000111:  5,
+        }
+
+        if sensors in lookup:
+            return lookup[sensors], False
+
+        # Fallback weighted centroid approximation
+        if (sensors & 0b11000000) != 0:
+            return -6, False
+        if (sensors & 0b00000011) != 0:
+            return 6, False
+        if (sensors & 0b00110000) != 0:
+            return -2, False
+        return 2, False
+
+    def pid_step(self, error: int, line_lost: bool, kp: int, ki: int, kd: int) -> int:
+        """
+        Executes one discrete PID cycle with exact fixed-point arithmetic.
+        """
+        # Update last known direction
+        if not line_lost:
+            if error > 0:
+                self.last_dir = 1
+            elif error < 0:
+                self.last_dir = 0
+
+        # P Term: 16-bit signed
+        p_term = error * kp
+
+        # D Term: 16-bit signed
+        delta_e = error - self.error_prev
+        d_term = delta_e * kd
+        self.error_prev = error
+
+        # Integral accumulation with anti-windup clamping
+        if line_lost:
+            # Hold integral during line loss
+            self.inter_sat = False
+        else:
+            acc_next = self.integral_acc + error
+            if acc_next > self.imax:
+                self.integral_acc = self.imax
+                self.inter_sat = True
+            elif acc_next < -self.imax:
+                self.integral_acc = -self.imax
+                self.inter_sat = True
+            else:
+                self.integral_acc = acc_next
+                self.inter_sat = False
+
+        # I Term: (acc * ki) >> 4
+        i_term = (self.integral_acc * ki) >> 4
+
+        # Total PID sum
+        pid_sum = p_term + i_term + d_term
+
+        # Scale shift
+        pid_scaled = pid_sum >> self.scale_shift
+
+        # Output saturation to [-127, +127]
+        if pid_scaled > 127:
+            self.steer_out = 127
+            self.steer_sat = True
+        elif pid_scaled < -127:
+            self.steer_out = -127
+            self.steer_sat = True
+        else:
+            self.steer_out = pid_scaled
+            self.steer_sat = False
+
+        return self.steer_out
+
+    def mix_motors(self, base_speed: int, steer: int, line_lost: bool) -> tuple[int, int]:
+        """
+        Differential drive mixer with line-loss pivot recovery.
+        Returns (pwm_left, pwm_right).
+        """
+        base_speed = max(0, min(255, base_speed))
+        if line_lost:
+            if self.last_dir == 0:
+                # Pivot Left
+                return 0, self.search_speed
+            else:
+                # Pivot Right
+                return self.search_speed, 0
+
+        mix_left = base_speed - steer
+        mix_right = base_speed + steer
+
+        pwm_left = max(0, min(255, mix_left))
+        pwm_right = max(0, min(255, mix_right))
+
+        return pwm_left, pwm_right
+
+    def process_frame(self, sensor_byte: int, base_speed: int, kp=32, ki=2, kd=48) -> dict:
+        """
+        Executes complete sensor-to-motor pipeline for one frame.
+        """
+        error, line_lost = self.encode_line_position(sensor_byte)
+        steer = self.pid_step(error, line_lost, kp, ki, kd)
+        pwm_l, pwm_r = self.mix_motors(base_speed, steer, line_lost)
+
+        return {
+            "error": error,
+            "line_lost": line_lost,
+            "steer": steer,
+            "pwm_left": pwm_l,
+            "pwm_right": pwm_r,
+            "inter_sat": self.inter_sat,
+            "steer_sat": self.steer_sat,
+            "last_dir": self.last_dir
+        }

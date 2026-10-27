@@ -1,0 +1,26 @@
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Build artifacts & simulation outputs
+obj_dir/
+build/
+*.log
+*.jou
+*.vcd
+*.fst
+*.bin
+*.hex
+*.elf
+
+# IDE & OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store
