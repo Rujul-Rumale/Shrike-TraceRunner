@@ -15,6 +15,12 @@ module tb_pid_top;
     reg spi_mosi;
     wire spi_miso;
     wire spi_miso_en;
+    wire pwm_left_out;
+    wire pwm_left_oe;
+    wire pwm_right_out;
+    wire pwm_right_oe;
+    wire motor_en_out;
+    wire motor_en_oe;
     wire led;
     wire led_en;
 
@@ -29,6 +35,12 @@ module tb_pid_top;
         .spi_miso(spi_miso),
         .spi_miso_en(spi_miso_en),
         .direct_sensor_pins(8'b0),
+        .pwm_left_out(pwm_left_out),
+        .pwm_left_oe(pwm_left_oe),
+        .pwm_right_out(pwm_right_out),
+        .pwm_right_oe(pwm_right_oe),
+        .motor_en_out(motor_en_out),
+        .motor_en_oe(motor_en_oe),
         .led(led),
         .led_en(led_en)
     );
@@ -210,11 +222,54 @@ module tb_pid_top;
         end
 
         // ---------------------------------------------------------------------
+        // Test 6: Verify Hardware PWM Generation on FPGA PMOD pins
+        // ---------------------------------------------------------------------
+        $display("\n[TEST 6] Testing FPGA 2-Channel Hardware PWM Generation...");
+        if (motor_en_out !== 1'b1) begin
+            $display("  [FAIL] motor_en_out is not asserted during active operation");
+            test_failures = test_failures + 1;
+        end else begin
+            $display("  [PASS] motor_en_out asserted correctly.");
+        end
+
+        // Sample PWM signals over 5000 ns to verify pulse activity
+        begin : test_pwm_pulses
+            integer pwm_l_transitions;
+            integer pwm_r_transitions;
+            reg last_l, last_r;
+            integer k;
+
+            pwm_l_transitions = 0;
+            pwm_r_transitions = 0;
+            last_l = pwm_left_out;
+            last_r = pwm_right_out;
+
+            for (k = 0; k < 6000; k = k + 1) begin
+                @(posedge clk);
+                if (pwm_left_out !== last_l) begin
+                    pwm_l_transitions = pwm_l_transitions + 1;
+                    last_l = pwm_left_out;
+                end
+                if (pwm_right_out !== last_r) begin
+                    pwm_r_transitions = pwm_r_transitions + 1;
+                    last_r = pwm_right_out;
+                end
+            end
+
+            if (pwm_l_transitions > 0 && pwm_r_transitions > 0) begin
+                $display("  [PASS] FPGA Hardware PWM pulses detected on both left (%0d transitions) and right (%0d transitions) channels.", pwm_l_transitions, pwm_r_transitions);
+            end else begin
+                $display("  [FAIL] FPGA Hardware PWM static! (L transitions: %0d, R transitions: %0d)", pwm_l_transitions, pwm_r_transitions);
+                test_failures = test_failures + 1;
+            end
+        end
+
+        // ---------------------------------------------------------------------
         // Summary
         // ---------------------------------------------------------------------
         $display("\n============================================================");
         if (test_failures == 0) begin
-            $display(" TESTBENCH SUCCESS: ALL 5 TEST SUITES PASSED (0 FAILURES)!");
+            $display(" TESTBENCH SUCCESS: ALL 6 TEST SUITES PASSED (0 FAILURES)!");
         end else begin
             $display(" TESTBENCH FAILED: %0d TESTS FAILED!", test_failures);
         end

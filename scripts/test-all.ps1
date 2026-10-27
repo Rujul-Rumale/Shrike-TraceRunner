@@ -42,7 +42,8 @@ $testDir = "$projDir\tests"
 
 # 1. Golden Reference Model Unit Tests
 Run-Step "1. Python Golden PID Reference Model Tests" {
-    $out = python "$testDir\test_pid_golden.py" 2>&1
+    $out1 = python "$testDir\test_pid_golden.py" 2>&1
+    $out2 = python "$testDir\test_pwm.py" 2>&1
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -64,6 +65,7 @@ Run-Step "3. Yosys Synthesis & Netlist Elaboration" {
         "$srcDir/line_position_encoder.v",
         "$srcDir/pid_controller.v",
         "$srcDir/motor_mixer.v",
+        "$srcDir/pwm_generator.v",
         "$srcDir/pid_top.v"
     ) -replace '\\', '/' -join " "
     $cmd = "read_verilog $srcs; hierarchy -check -top pid_top; proc; opt; check; stat"

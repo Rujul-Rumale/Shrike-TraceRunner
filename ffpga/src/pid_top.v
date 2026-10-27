@@ -28,14 +28,26 @@
     // Direct 8-channel IR Sensor inputs (PMOD header option)
     (* iopad_external_pin *) input  [7:0] direct_sensor_pins,
 
+    // Hardware PWM Motor Outputs (Direct PMOD / H-Bridge drive)
+    (* iopad_external_pin *) output pwm_left_out,
+    (* iopad_external_pin *) output pwm_left_oe,
+    (* iopad_external_pin *) output pwm_right_out,
+    (* iopad_external_pin *) output pwm_right_oe,
+    (* iopad_external_pin *) output motor_en_out,
+    (* iopad_external_pin *) output motor_en_oe,
+
     // FPGA Onboard User LED
     (* iopad_external_pin *) output led,
     (* iopad_external_pin *) output led_en
 );
 
-    // Enable internal 50 MHz oscillator
-    assign clk_en = 1'b1;
-    assign led_en = 1'b1;
+    // Enable internal 50 MHz oscillator & PMOD outputs
+    assign clk_en        = 1'b1;
+    assign led_en        = 1'b1;
+    assign pwm_left_oe   = 1'b1;
+    assign pwm_right_oe  = 1'b1;
+    assign motor_en_oe   = 1'b1;
+    assign motor_en_out  = internal_rst_n && !parity_error_flag;
 
     // -------------------------------------------------------------------------
     // Power-on Reset Generator
@@ -260,6 +272,31 @@
         .last_dir(w_last_dir),
         .pwm_left(w_pwm_left),
         .pwm_right(w_pwm_right)
+    );
+
+    // -------------------------------------------------------------------------
+    // Hardware PWM Generators (2-Channel Ultrasonic ~19.53 kHz)
+    // -------------------------------------------------------------------------
+    pwm_generator #(
+        .PRESCALER(10),
+        .WIDTH(8)
+    ) u_pwm_left (
+        .clk(clk),
+        .rst_n(internal_rst_n),
+        .enable(motor_en_out),
+        .duty(w_pwm_left),
+        .pwm_out(pwm_left_out)
+    );
+
+    pwm_generator #(
+        .PRESCALER(10),
+        .WIDTH(8)
+    ) u_pwm_right (
+        .clk(clk),
+        .rst_n(internal_rst_n),
+        .enable(motor_en_out),
+        .duty(w_pwm_right),
+        .pwm_out(pwm_right_out)
     );
 
     // Drive User LED: ON when line detected, blinks heartbeat when lost
