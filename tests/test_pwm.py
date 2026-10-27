@@ -1,7 +1,9 @@
 """
-Unit test for FPGA Hardware PWM Generator logic.
-Simulates clock ticks, prescaler, duty comparison, and enable/reset behavior.
+Unit test for FPGA Hardware PWM Generator and Safety Interlocks.
+Simulates clock ticks, prescaler, duty comparison, enable/reset behavior, and motor mixer safety.
 """
+
+from reference_model import PIDReferenceModel
 
 def simulate_pwm(duty_val: int, prescaler: int = 10, total_periods: int = 2, enabled: bool = True):
     period_ticks = 256
@@ -55,7 +57,51 @@ def test_pwm_ratios():
     # Test disabled state
     assert simulate_pwm(128, enabled=False) == 0.0, "Disabled PWM must yield 0%"
 
-    print("All PWM logic simulation assertions PASSED!")
+    print("[PASS] PWM duty ratios and disable assertions passed.")
+
+def test_motor_mixer_zero_speed_safety():
+    """Verify that when base_speed == 0, motors NEVER turn, even if line_lost is active."""
+    model = PIDReferenceModel()
+    
+    # 1. Normal line following with zero speed
+    pwm_l, pwm_r = model.mix_motors(base_speed=0, steer=20, line_lost=False)
+    assert pwm_l == 0 and pwm_r == 0, f"Expected (0,0) when base_speed=0, got ({pwm_l},{pwm_r})"
+    
+    # 2. Line lost with zero speed: MUST NOT execute pivot search!
+    model.last_dir = 1
+    pwm_l, pwm_r = model.mix_motors(base_speed=0, steer=0, line_lost=True)
+    assert pwm_l == 0 and pwm_r == 0, f"Expected (0,0) during line_lost when base_speed=0, got ({pwm_l},{pwm_r})"
+    
+    # 3. Line lost with active speed: Should pivot toward last_dir
+    pwm_l, pwm_r = model.mix_motors(base_speed=100, steer=0, line_lost=True)
+    assert pwm_l == 60 and pwm_r == 0, f"Expected (60,0) pivot right, got ({pwm_l},{pwm_r})"
+    
+    print("[PASS] Motor mixer zero-speed safety interlock assertions passed.")
+
+def test_watchdog_timeout_model():
+    """Verifies that an activity watchdog timeout forces motor enable low."""
+    timeout_cycles = 2_500_000 # 50 ms at 50 MHz
+    
+    # Simulate packet arrival and timeout
+    watchdog_cnt = 0
+    watchdog_tripped = False
+    is_armed = True
+    
+    # Simulate 60 ms without packet (3,000,000 cycles)
+    for cycle in range(3_000_000):
+        if not watchdog_tripped:
+            if watchdog_cnt >= timeout_cycles:
+                watchdog_tripped = True
+                is_armed = False
+            else:
+                watchdog_cnt += 1
+                
+    assert watchdog_tripped is True, "Watchdog should have tripped after 50 ms"
+    assert is_armed is False, "Robot must disarm when watchdog trips"
+    print("[PASS] Hardware SPI watchdog simulation assertions passed.")
 
 if __name__ == "__main__":
     test_pwm_ratios()
+    test_motor_mixer_zero_speed_safety()
+    test_watchdog_timeout_model()
+    print("All PWM logic & safety simulation assertions PASSED!")

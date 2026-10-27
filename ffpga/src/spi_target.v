@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 // ============================================================================
 // Module: spi_target.v
 // Architecture: Renesas ForgeFPGA SLG47910 / Vicharak Shrike-Fi
@@ -74,7 +76,7 @@ module spi_target #(
         end else if (!w_cs_active) begin
             r_bit_count <= 3'd0;
         end else if (w_sck_r_edge) begin
-            if (r_bit_count == WIDTH - 1) begin
+            if (r_bit_count == 3'd7) begin
                 r_bit_count <= 3'd0;
             end else begin
                 r_bit_count <= r_bit_count + 1'b1;
@@ -97,7 +99,7 @@ module spi_target #(
                 o_rx_data <= {o_rx_data[WIDTH-2:0], i_mosi};
 
                 // When last bit arrives, assert valid strobe
-                if (r_bit_count == WIDTH - 1) begin
+                if (r_bit_count == 3'd7) begin
                     o_rx_data_valid <= 1'b1;
                 end
             end

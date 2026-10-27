@@ -129,6 +129,8 @@ class PIDReferenceModel:
         Returns (pwm_left, pwm_right).
         """
         base_speed = max(0, min(255, base_speed))
+        if base_speed == 0:
+            return 0, 0
         if line_lost:
             if self.last_dir == 0:
                 # Pivot Left

@@ -34,7 +34,6 @@ module tb_pid_top;
         .spi_mosi(spi_mosi),
         .spi_miso(spi_miso),
         .spi_miso_en(spi_miso_en),
-        .direct_sensor_pins(8'b0),
         .pwm_left_out(pwm_left_out),
         .pwm_left_oe(pwm_left_oe),
         .pwm_right_out(pwm_right_out),

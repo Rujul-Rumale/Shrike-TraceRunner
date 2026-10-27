@@ -8,9 +8,10 @@
  *   PWM_Right = clamp(BaseSpeed + Steering, 0, 255)
  *
  * Line Loss Recovery:
- *   If line_lost is asserted, execute pivot search toward last_dir:
+ *   If line_lost is asserted and BaseSpeed > 0, execute pivot search toward last_dir:
  *     last_dir = 0 (Left):  PWM_Left = 0,            PWM_Right = SearchSpeed
  *     last_dir = 1 (Right): PWM_Left = SearchSpeed,  PWM_Right = 0
+ *   If BaseSpeed == 0, both motors remain stopped (safety interlock).
  */
 
 `timescale 1ns / 1ps
@@ -50,7 +51,11 @@ module motor_mixer #(
             pwm_left  <= 8'd0;
             pwm_right <= 8'd0;
         end else begin
-            if (line_lost) begin
+            if (base_speed == 8'd0) begin
+                // Safe stop: zero forward drive suppresses all motor activity
+                pwm_left  <= 8'd0;
+                pwm_right <= 8'd0;
+            end else if (line_lost) begin
                 // Search recovery: pivot toward the direction where line was last detected
                 if (last_dir == 1'b0) begin
                     pwm_left  <= 8'd0;

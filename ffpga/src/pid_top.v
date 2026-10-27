@@ -4,11 +4,20 @@
  * Target: Renesas ForgeFPGA SLG47910 (BB silicon)
  *
  * Board Interface (Shrike-Fi Hardware Interconnect):
- * - Pin 3: SPI_SCK      (ESP32 GPIO 12)
- * - Pin 4: SPI_SS_N     (ESP32 GPIO 10)
- * - Pin 5: SPI_MOSI     (ESP32 GPIO 11)
- * - Pin 6: SPI_MISO     (ESP32 GPIO 13)
+ * - Pin 3: SPI_SCK      (ESP32 GPIO 12 / PMOD J5 Pin 10)
+ * - Pin 4: SPI_SS_N     (ESP32 GPIO 10 / PMOD J5 Pin 9)
+ * - Pin 5: SPI_MOSI     (ESP32 GPIO 11 / PMOD J5 Pin 12)
+ * - Pin 6: SPI_MISO     (ESP32 GPIO 13 / PMOD J5 Pin 11)
  * - Pin 16: User LED    (On-board green LED)
+ * - Pin 24 (F_GPIO9):   PMOD J5 Pin 5 -> Left Motor PWM Output (19.53 kHz)
+ * - Pin 23 (F_GPIO8):   PMOD J5 Pin 6 -> Right Motor PWM Output (19.53 kHz)
+ * - Pin 2  (F_GPIO11):  PMOD J5 Pin 7 -> Hardware Motor Enable / E-Stop
+ *
+ * Safety Interlocks:
+ * - Motors are strictly disabled during power-on reset.
+ * - Hardware watchdog disables motors if SPI traffic ceases for > 50 ms.
+ * - Parity / Checksum error immediately trips motor enable low.
+ * - Disarm command (0x00) or speed == 0 disables motor outputs.
  */
 
 `timescale 1ns / 1ps
@@ -24,9 +33,6 @@
     (* iopad_external_pin *) input  spi_mosi,
     (* iopad_external_pin *) output spi_miso,
     (* iopad_external_pin *) output spi_miso_en,
-
-    // Direct 8-channel IR Sensor inputs (PMOD header option)
-    (* iopad_external_pin *) input  [7:0] direct_sensor_pins,
 
     // Hardware PWM Motor Outputs (Direct PMOD / H-Bridge drive)
     (* iopad_external_pin *) output pwm_left_out,
@@ -47,7 +53,6 @@
     assign pwm_left_oe   = 1'b1;
     assign pwm_right_oe  = 1'b1;
     assign motor_en_oe   = 1'b1;
-    assign motor_en_out  = internal_rst_n && !parity_error_flag;
 
     // -------------------------------------------------------------------------
     // Power-on Reset Generator
@@ -118,7 +123,7 @@
     reg [7:0]  ki_reg = 8'd2;
     reg [7:0]  kd_reg = 8'd48;
 
-    // Heartbeat and diagnostic counter
+    // Heartbeat counter (0.5 Hz blink)
     reg [24:0] heartbeat_cnt = 25'd0;
     reg        heartbeat_bit = 1'b0;
 
@@ -131,7 +136,7 @@
     end
 
     // Line Position & PID Wires
-    wire [7:0]        w_line_error;
+    wire signed [7:0] w_line_error;
     wire              w_line_lost;
     wire              w_last_dir;
     wire signed [7:0] w_steer_out;
@@ -142,24 +147,60 @@
     reg               pid_sample_tick;
     reg               parity_error_flag;
 
+    // -------------------------------------------------------------------------
+    // Hardware Safety Watchdog & Arming State
+    // -------------------------------------------------------------------------
+    reg [21:0] watchdog_cnt;
+    reg        watchdog_tripped;
+    reg        is_armed;
+
+    always @(posedge clk or negedge internal_rst_n) begin
+        if (!internal_rst_n) begin
+            watchdog_cnt     <= 22'd0;
+            watchdog_tripped <= 1'b1;
+            is_armed         <= 1'b0;
+        end else begin
+            if (pid_sample_tick) begin
+                // Refresh watchdog on verified run frame
+                watchdog_cnt     <= 22'd0;
+                watchdog_tripped <= 1'b0;
+                is_armed         <= (rx_cmd == 8'h10) && (rx_speed > 8'd0);
+            end else if (rx_cmd == 8'h00) begin
+                // Explicit disarm command
+                is_armed         <= 1'b0;
+            end else if (!watchdog_tripped) begin
+                if (watchdog_cnt >= 22'd2_500_000) begin // 50 ms timeout at 50 MHz
+                    watchdog_tripped <= 1'b1;
+                    is_armed         <= 1'b0;
+                end else begin
+                    watchdog_cnt <= watchdog_cnt + 1'b1;
+                end
+            end
+        end
+    end
+
+    // Hardware Safe Enable Gating
+    assign motor_en_out = internal_rst_n && is_armed && !parity_error_flag && !watchdog_tripped && (rx_speed > 8'd0);
+
     // Status Byte Assembly
     wire [7:0] w_status_byte = {
-        heartbeat_bit,          // Bit 7: Heartbeat
-        w_line_lost,            // Bit 6: Line lost
+        heartbeat_bit,          // Bit 7: Heartbeat toggle
+        w_line_lost,            // Bit 6: Line lost flag
         w_inter_sat,            // Bit 5: Integral saturated
         w_steer_sat,            // Bit 4: Steering saturated
-        parity_error_flag,      // Bit 3: Parity error
+        parity_error_flag,      // Bit 3: Parity error flag
         w_last_dir,             // Bit 2: Last known direction (0=L, 1=R)
-        2'b00                   // Bit 1:0: Reserved
+        watchdog_tripped,       // Bit 1: Watchdog timeout trip
+        is_armed                // Bit 0: Hardware armed status
     };
 
     // 4-byte SPI Frame Dispatcher
     always @(posedge clk or negedge internal_rst_n) begin
         if (!internal_rst_n) begin
             byte_index        <= 2'd0;
-            rx_cmd            <= 8'h10;
+            rx_cmd            <= 8'h00; // Power-on default: DISARMED
             rx_sensor         <= 8'h00;
-            rx_speed          <= 8'd100;
+            rx_speed          <= 8'd0;  // Power-on default: 0 speed
             rx_parity         <= 8'h00;
             spi_tx_data       <= 8'h00;
             pid_sample_tick   <= 1'b0;
@@ -196,6 +237,9 @@
                             parity_error_flag <= 1'b0;
                             // Command Decoding
                             case (rx_cmd)
+                                8'h00: begin // Disarm / Safe Stop
+                                    // is_armed will be deasserted
+                                end
                                 8'h10: begin // Normal Run Mode
                                     pid_sample_tick <= 1'b1;
                                 end
@@ -213,6 +257,9 @@
                                     ki_reg <= 8'd2;
                                     kd_reg <= 8'd48;
                                 end
+                                default: begin
+                                    // No-op for unassigned command codes
+                                end
                             endcase
                         end else begin
                             parity_error_flag <= 1'b1;
@@ -224,15 +271,12 @@
     end
 
     // -------------------------------------------------------------------------
-    // Line Position Centroid Encoder (Supports 8 Separate Inputs)
+    // Line Position Centroid Encoder
     // -------------------------------------------------------------------------
-    // Select input: Direct PMOD hardware pins (Cmd 0x11) or MCU SPI bus (Cmd 0x10)
-    wire [7:0] w_sensor_source = (rx_cmd == 8'h11) ? direct_sensor_pins : rx_sensor;
-
     line_position_encoder u_encoder (
         .clk(clk),
         .rst_n(internal_rst_n),
-        .sensor_bits(w_sensor_source),
+        .sensor_bits(rx_sensor),
         .error_out(w_line_error),
         .line_lost(w_line_lost),
         .last_dir(w_last_dir)
