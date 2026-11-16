@@ -26,6 +26,9 @@ private:
     uint32_t    _last_valid_time_ms;
     bool        _is_configured;
     bool        _last_heartbeat;
+    uint8_t     _kp;
+    uint8_t     _ki;
+    uint8_t     _kd;
 
 public:
     FpgaInterface();
@@ -38,6 +41,10 @@ public:
     bool setKi(uint8_t ki);
     bool setKd(uint8_t kd);
     bool resetPID();
+
+    uint8_t getKp() const { return _kp; }
+    uint8_t getKi() const { return _ki; }
+    uint8_t getKd() const { return _kd; }
 
     bool isConfigured() const { return _is_configured; }
     bool isResponsive(uint32_t timeout_ms = WATCHDOG_TIMEOUT_MS) const;

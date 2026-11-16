@@ -161,12 +161,26 @@ Open the serial monitor at **115200 baud** (via Arduino IDE, PuTTY, or `python -
 ### Runtime Serial Commands:
 - `arm` &mdash; Enable motor outputs and start PID tracking.
 - `disarm` &mdash; Immediately silence servo pulses and stop robot.
-- `speed <val>` &mdash; Set base forward speed (`0`–`255`, recommended starting speed: `70`–`90`).
+- `speed <val>` &mdash; Set base forward speed (`0`–`200`, recommended starting speed: `70`–`90`).
 - `kp <val>` &mdash; Set proportional gain.
 - `ki <val>` &mdash; Set integral gain.
 - `kd <val>` &mdash; Set derivative gain.
-- `telemetry` &mdash; Toggle live 10 Hz telemetry streaming (`PWM_L`, `PWM_R`, `Error`, `Status`).
-- `status` &mdash; Print current gains, speed, and safety state.
+- `reset` &mdash; Reset FPGA PID accumulator to defaults.
+- `csv` &mdash; Toggle CSV streaming format.
+
+### Live Web PID Tuning Dashboard (Wi-Fi AP):
+The ESP32-S3 hosts an independent, zero-dependency wireless tuning dashboard for trackside calibration without needing a USB cable:
+1. Connect your phone or laptop to the Wi-Fi Access Point:
+   - **SSID:** `Shrike-TraceRunner`
+   - **Password:** *(Open, no password needed)*
+2. Open your web browser and navigate to: **`http://192.168.4.1/`**
+3. **Features:**
+   - **Live 8-Sensor Visualizer:** Real-time visual display of IR sensor reflection states.
+   - **Line Error Gauge:** Real-time needle indicating signed error $[-7, +7]$.
+   - **Servo Pulse Meters:** Live Left & Right pulse widths in microseconds.
+   - **Live Parameter Sliders:** Tune $K_p$, $K_i$, $K_d$, and Base Speed with immediate SPI update to FPGA registers.
+   - **Quick Presets:** Instant switching between Conservative ($K_p=3, K_d=1$), Balanced ($K_p=4, K_d=2$), and Fast Slalom ($K_p=6, K_d=4$).
+   - **Safety Controls:** Instant Arm, Disarm (0V true pulse silence), and Emergency Stop.
 
 ---
 
@@ -201,7 +215,9 @@ workspace/fpga_pid_line_follower/
 │       ├── sensors.h / sensors.cpp           # IR sensor GPIO sampling
 │       ├── motors.h / motors.cpp             # Servo pulse & motor interface
 │       ├── fpga_interface.h / .cpp           # SPI bootstrap & runtime communication
-│       └── telemetry.h / telemetry.cpp       # Serial CLI & diagnostics
+│       ├── telemetry.h / telemetry.cpp       # Serial CLI & diagnostics
+│       ├── web_dashboard.h                   # Embedded responsive dark-mode HTML/CSS/JS UI
+│       └── web_server_handler.h / .cpp       # Wi-Fi AP & REST API server
 ├── Go/
 │   └── Shriketracerunner/                    # Official Renesas Go Configure Hub project
 │       └── Shriketracerunner.ffpga           # Project XML with pin mappings & synthesis config

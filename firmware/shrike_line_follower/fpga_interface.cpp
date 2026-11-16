@@ -8,6 +8,9 @@ FpgaInterface::FpgaInterface()
     _last_valid_time_ms = 0;
     _is_configured = false;
     _last_heartbeat = false;
+    _kp = 4;
+    _ki = 0;
+    _kd = 2;
 }
 
 bool FpgaInterface::begin() {
@@ -108,21 +111,27 @@ bool FpgaInterface::exchangeControl(uint8_t cmd, uint8_t sensor_byte, uint8_t ba
 }
 
 bool FpgaInterface::setKp(uint8_t kp) {
+    _kp = kp;
     FpgaResponse dummy;
     return exchangeControl(0x20, kp, 0, dummy);
 }
 
 bool FpgaInterface::setKi(uint8_t ki) {
+    _ki = ki;
     FpgaResponse dummy;
     return exchangeControl(0x21, ki, 0, dummy);
 }
 
 bool FpgaInterface::setKd(uint8_t kd) {
+    _kd = kd;
     FpgaResponse dummy;
     return exchangeControl(0x22, kd, 0, dummy);
 }
 
 bool FpgaInterface::resetPID() {
+    _kp = 4;
+    _ki = 0;
+    _kd = 2;
     FpgaResponse dummy;
     return exchangeControl(0xFF, 0, 0, dummy);
 }

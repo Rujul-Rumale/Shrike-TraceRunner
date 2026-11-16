@@ -76,4 +76,12 @@
 #define LINE_LOSS_TIMEOUT_MS   800      // E-Stop if line is missing for > 800ms
 #define TELEMETRY_BAUD_RATE    115200
 
+// ============================================================================
+// 6. WI-FI & WEB TUNING INTERFACE
+// ============================================================================
+#define WIFI_AP_SSID           "Shrike-TraceRunner"
+#define WIFI_AP_PASSWORD       ""        // Open Access Point for track tuning
+#define WIFI_AP_CHANNEL        1
+#define WEB_SERVER_PORT        80
+
 #endif // CONFIG_H

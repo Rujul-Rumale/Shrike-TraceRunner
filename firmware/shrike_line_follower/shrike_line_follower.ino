@@ -21,6 +21,7 @@
 #include "motors.h"
 #include "fpga_interface.h"
 #include "telemetry.h"
+#include "web_server_handler.h"
 
 // System state machine
 enum SystemState {
@@ -33,10 +34,11 @@ enum SystemState {
 };
 
 // Global subsystems
-SensorArray   sensors(SENSOR_ACTIVE_POLARITY_HIGH);
-MotorDriver   motors;
-FpgaInterface fpga;
-Telemetry     telemetry;
+SensorArray      sensors(SENSOR_ACTIVE_POLARITY_HIGH);
+MotorDriver      motors;
+FpgaInterface    fpga;
+Telemetry        telemetry;
+WebServerHandler webServer;
 
 // Global control variables
 SystemState   sys_state       = STATE_BOOT;
@@ -55,6 +57,7 @@ void setup() {
     sensors.begin();
     motors.begin();
     fpga.begin();
+    webServer.begin(&fpga, &motors, &sensors, &base_speed, &last_fpga_resp);
 
     Serial.println("[BOOT] Starting Vicharak Shrike-Fi System Initialization...");
     sys_state = STATE_INIT_FPGA;
@@ -88,6 +91,7 @@ void loop() {
     // 1. Process Serial Commands & Diagnostics (Non-Blocking)
     // -------------------------------------------------------------------------
     telemetry.handleSerialCommands(fpga, motors, sensors, base_speed);
+    webServer.handleClient();
 
     // -------------------------------------------------------------------------
     // 2. Deterministic 1.0 kHz Control Loop (Every 1000 microseconds)
