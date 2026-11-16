@@ -13,6 +13,7 @@ build/
 *.vcd
 *.fst
 *.bin
+!bitstream/*.bin
 *.hex
 *.elf
 *.lnk

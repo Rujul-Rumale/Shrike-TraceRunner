@@ -176,6 +176,8 @@ Open the serial monitor at **115200 baud** (via Arduino IDE, PuTTY, or `python -
 workspace/fpga_pid_line_follower/
 ├── README.md                                 # Master architecture & project documentation
 ├── .gitignore                                # Git ignore rules (clean repository state)
+├── bitstream/
+│   └── shrike_tracerunner.bin                # Pre-built bitstream for direct flashing via ShrikeFlash
 ├── docs/
 │   ├── WIRING.md                             # Complete wiring schematics, power & pinout reference
 │   ├── BUILD_AND_FLASH.md                    # Compilation, bitstream packing & upload guide
@@ -214,3 +216,13 @@ workspace/fpga_pid_line_follower/
     ├── run-tb.ps1                            # Dedicated testbench & lint runner
     └── generate_waveforms.py                 # Cycle-accurate ASCII & VCD waveform generator
 ```
+
+---
+
+## License
+
+This project adheres to Vicharak's dual-licensing standard:
+
+* **Source Code (Verilog RTL, MCU Firmware, Host Scripts & Verification Suite):** Licensed under the **GNU General Public License v2.0 (GPL-2.0)**. See [LICENSE.md](LICENSE.md) or [LICENSE](LICENSE).
+* **Hardware Designs & Documentation (Wiring Schematics, Pinout Tables, Electrical Specs):** Licensed under the **CERN Open Hardware Licence v1.2 (CERN-OHL)**. See [LICENSE_HW.md](LICENSE_HW.md).
+
