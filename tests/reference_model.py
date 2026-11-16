@@ -1,10 +1,11 @@
 """
 Bit-Accurate Python Reference Model for ForgeFPGA PID Line Follower.
 Matches the exact register widths, signedness, arithmetic shifts, and saturation bounds of the Verilog RTL.
+Supports both legacy DC Motor PWM and 360-Degree Continuous Rotation RC Servos.
 """
 
 class PIDReferenceModel:
-    def __init__(self, scale_shift=4, imax=511, search_speed=60):
+    def __init__(self, scale_shift=4, imax=63, search_speed=60):
         self.scale_shift = scale_shift
         self.imax = imax
         self.search_speed = search_speed
@@ -69,6 +70,7 @@ class PIDReferenceModel:
     def pid_step(self, error: int, line_lost: bool, kp: int, ki: int, kd: int) -> int:
         """
         Executes one discrete PID cycle with exact fixed-point arithmetic.
+        Matches the 2-stage pipelined Verilog RTL.
         """
         # Update last known direction
         if not line_lost:
@@ -77,17 +79,16 @@ class PIDReferenceModel:
             elif error < 0:
                 self.last_dir = 0
 
-        # P Term: 16-bit signed
+        # P Term: signed
         p_term = error * kp
 
-        # D Term: 16-bit signed
+        # D Term: signed
         delta_e = error - self.error_prev
         d_term = delta_e * kd
         self.error_prev = error
 
-        # Integral accumulation with anti-windup clamping
+        # Integral accumulation with anti-windup clamping [-63, +63]
         if line_lost:
-            # Hold integral during line loss
             self.inter_sat = False
         else:
             acc_next = self.integral_acc + error
@@ -101,8 +102,8 @@ class PIDReferenceModel:
                 self.integral_acc = acc_next
                 self.inter_sat = False
 
-        # I Term: (acc * ki) >> 4
-        i_term = (self.integral_acc * ki) >> 4
+        # I Term: (acc * ki) >> 2
+        i_term = (self.integral_acc * ki) >> 2
 
         # Total PID sum
         pid_sum = p_term + i_term + d_term
@@ -110,12 +111,12 @@ class PIDReferenceModel:
         # Scale shift
         pid_scaled = pid_sum >> self.scale_shift
 
-        # Output saturation to [-127, +127]
-        if pid_scaled > 127:
-            self.steer_out = 127
+        # Output saturation to [-100, +100]
+        if pid_scaled > 100:
+            self.steer_out = 100
             self.steer_sat = True
-        elif pid_scaled < -127:
-            self.steer_out = -127
+        elif pid_scaled < -100:
+            self.steer_out = -100
             self.steer_sat = True
         else:
             self.steer_out = pid_scaled
@@ -126,7 +127,7 @@ class PIDReferenceModel:
     def mix_motors(self, base_speed: int, steer: int, line_lost: bool) -> tuple[int, int]:
         """
         Differential drive mixer with line-loss pivot recovery.
-        Returns (pwm_left, pwm_right).
+        Returns intermediate (duty_l, duty_r) clamped to [0..255].
         """
         base_speed = max(0, min(255, base_speed))
         if base_speed == 0:
@@ -147,13 +148,39 @@ class PIDReferenceModel:
 
         return pwm_left, pwm_right
 
-    def process_frame(self, sensor_byte: int, base_speed: int, kp=32, ki=2, kd=48) -> dict:
+    def mix_servos(self, base_speed: int, steer: int, line_lost: bool, is_armed: bool = True) -> tuple[int, int]:
         """
-        Executes complete sensor-to-motor pipeline for one frame.
+        360-Degree Continuous Rotation RC Servo Mixer.
+        Returns target pulse widths in microseconds [1000..2000].
+        Neutral stop: 1500 us.
+        Left Servo:  1500 + 2*duty_l (Forward > 1500 us)
+        Right Servo: 1500 - 2*duty_r (Forward < 1500 us, mirrored mount)
+        Disarmed or speed 0: Returns (0, 0) for True Silence 0V mode.
+        """
+        if not is_armed or base_speed == 0:
+            return 0, 0
+
+        if line_lost:
+            if self.last_dir == 0:
+                # Pivot Left: Left stopped (1500 us), Right drives forward (1500 - 120 = 1380 us)
+                return 1500, 1500 - (self.search_speed * 2)
+            else:
+                # Pivot Right: Left drives forward (1500 + 120 = 1620 us), Right stopped (1500 us)
+                return 1500 + (self.search_speed * 2), 1500
+
+        duty_l, duty_r = self.mix_motors(base_speed, steer, line_lost=False)
+        pulse_l = max(1000, min(2000, 1500 + (duty_l * 2)))
+        pulse_r = max(1000, min(2000, 1500 - (duty_r * 2)))
+        return pulse_l, pulse_r
+
+    def process_frame(self, sensor_byte: int, base_speed: int, kp=32, ki=2, kd=48, is_armed: bool = True) -> dict:
+        """
+        Executes complete sensor-to-motor/servo pipeline for one frame.
         """
         error, line_lost = self.encode_line_position(sensor_byte)
         steer = self.pid_step(error, line_lost, kp, ki, kd)
         pwm_l, pwm_r = self.mix_motors(base_speed, steer, line_lost)
+        pulse_l, pulse_r = self.mix_servos(base_speed, steer, line_lost, is_armed)
 
         return {
             "error": error,
@@ -161,6 +188,8 @@ class PIDReferenceModel:
             "steer": steer,
             "pwm_left": pwm_l,
             "pwm_right": pwm_r,
+            "pulse_left_us": pulse_l,
+            "pulse_right_us": pulse_r,
             "inter_sat": self.inter_sat,
             "steer_sat": self.steer_sat,
             "last_dir": self.last_dir

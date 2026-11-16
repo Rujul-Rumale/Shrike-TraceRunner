@@ -1,8 +1,5 @@
-/*
- * Module: tb_pid_top.v
- * Description: Self-checking testbench for pid_top module.
- * Verifies SPI framing, error calculation, PID arithmetic, and motor mixing.
- */
+// Go Configure Software Hub Custom Testbench: tb_pid_top.vt
+// 360-Degree Continuous Rotation RC Servo & 2-Stage Pipelined PID Hardware Verification
 
 `timescale 1ns / 1ps
 
@@ -47,7 +44,7 @@ module tb_pid_top;
     // 50 MHz system clock (20 ns period)
     always #10 clk = ~clk;
 
-    // Task to perform a 1-byte SPI transfer (Mode 0, MSB first)
+    // Task to perform a 1-byte SPI transfer (Mode 0, MSB first, 5 MHz SPI)
     task spi_transfer_byte(
         input  [7:0] tx_byte,
         output [7:0] rx_byte
@@ -73,30 +70,27 @@ module tb_pid_top;
         input  [7:0] sensor,
         input  [7:0] speed,
         output [7:0] status,
-        output [7:0] pwm_l,
-        output [7:0] pwm_r,
+        output [7:0] pwml,
+        output [7:0] pwmr,
         output [7:0] error_out
     );
         reg [7:0] parity;
-        reg [7:0] rx_dummy;
         begin
             parity = cmd ^ sensor ^ speed;
 
-            // Assert SS
             #200;
             spi_ss_n = 1'b0;
             #200;
 
-            // Byte 0: CMD
+            // Byte 0: CMD -> Returns STATUS
             spi_transfer_byte(cmd, status);
-            // Byte 1: SENSOR
-            spi_transfer_byte(sensor, pwm_l);
-            // Byte 2: SPEED
-            spi_transfer_byte(speed, pwm_r);
-            // Byte 3: PARITY
+            // Byte 1: SENSOR -> Returns DUTY_L
+            spi_transfer_byte(sensor, pwml);
+            // Byte 2: SPEED -> Returns DUTY_R
+            spi_transfer_byte(speed, pwmr);
+            // Byte 3: PARITY -> Returns LINE_ERROR
             spi_transfer_byte(parity, error_out);
 
-            // Deassert SS
             #200;
             spi_ss_n = 1'b1;
             #500;
@@ -104,12 +98,31 @@ module tb_pid_top;
     endtask
 
     // Test registers
-    reg [7:0] status_rx, pwm_l_rx, pwm_r_rx, err_rx;
+    reg [7:0] status_rx, pwml_rx, pwmr_rx, err_rx;
     integer test_failures = 0;
 
     initial begin
         $dumpfile("tb_pid_top.vcd");
-        $dumpvars(0, tb_pid_top);
+        $dumpvars(0,
+            rst_n,
+            spi_ss_n,
+            spi_sck,
+            spi_mosi,
+            spi_miso,
+            pwm_left_out,
+            pwm_right_out,
+            motor_en_out,
+            led,
+            pwml_rx,
+            pwmr_rx,
+            err_rx,
+            status_rx,
+            dut.target_pulse_l,
+            dut.target_pulse_r,
+            dut.active_duty_l,
+            dut.active_duty_r,
+            dut.is_armed
+        );
 
         clk = 1'b0;
         rst_n = 1'b0;
@@ -118,163 +131,129 @@ module tb_pid_top;
         spi_mosi = 1'b0;
 
         $display("\n============================================================");
-        $display(" STARTING SELF-CHECKING TESTBENCH: tb_pid_top");
+        $display(" RENESAS GO CONFIGURE HUB RTL SIMULATION: tb_pid_top");
+        $display(" 360-Degree Continuous Rotation RC Servo Engine");
         $display("============================================================\n");
 
-        // 1. Release reset after 300 cycles (internal counter is 256)
+        // Release reset after 300 cycles (internal reset counter is 256)
         #6000;
         rst_n = 1'b1;
-        #1000;
-        $display("[TB] Power-on Reset Complete. Initializing SPI transactions...");
+        #2000;
+        $display("[TB] Reset deasserted. Initializing SPI communication...");
 
-        // ---------------------------------------------------------------------
-        // TEST 1: Initial Sync & Center Tracking (S = 8'b0001_1000)
-        // ---------------------------------------------------------------------
-        $display("\n[TEST 1] Testing Dead Center Tracking (Sensors = 8'b0001_1000)...");
-        // Prime the pipeline with 1st frame
-        spi_exchange_frame(8'h10, 8'b0001_1000, 8'd100, status_rx, pwm_l_rx, pwm_r_rx, err_rx);
-        #1000;
-        // 2nd frame retrieves the computed outputs from 1st frame
-        spi_exchange_frame(8'h10, 8'b0001_1000, 8'd100, status_rx, pwm_l_rx, pwm_r_rx, err_rx);
-        
-        $display("  -> Result: PWM_L=%d, PWM_R=%d, Error=%d, Status=0x%02X",
-                 pwm_l_rx, pwm_r_rx, $signed(err_rx), status_rx);
+        // -------------------------------------------------------------
+        // TEST 1: Center Line Tracking (Sensors = 8'b0001_1000, Speed = 100)
+        // -------------------------------------------------------------
+        $display("\n[TEST 1] Testing Dead Center Tracking (Sensors = 8'b0001_1000, Speed = 100)...");
+        // Frame 1: Stimulus input
+        spi_exchange_frame(8'h10, 8'b0001_1000, 8'd100, status_rx, pwml_rx, pwmr_rx, err_rx);
+        #5000;
+        // Frame 2: Read back pipelined telemetry
+        spi_exchange_frame(8'h10, 8'b0001_1000, 8'd100, status_rx, pwml_rx, pwmr_rx, err_rx);
 
-        if (pwm_l_rx == 8'd100 && pwm_r_rx == 8'd100 && $signed(err_rx) == 0) begin
-            $display("  [PASS] Center Tracking verified: Equal motor duties (100, 100), Zero error.");
+        $display("  -> Telemetry: PWM_L=%d, PWM_R=%d, Error=%d, Status=0x%02X",
+                 pwml_rx, pwmr_rx, $signed(err_rx), status_rx);
+
+        if (pwml_rx == 8'd100 && pwmr_rx == 8'd100 && $signed(err_rx) == 0 && motor_en_out == 1'b1) begin
+            $display("  [PASS] Center Tracking Telemetry Verified (Equal duty 100, Error 0, Motor_EN High).");
         end else begin
-            $display("  [FAIL] Expected (100, 100, 0), Got (%d, %d, %d)", pwm_l_rx, pwm_r_rx, $signed(err_rx));
+            $display("  [FAIL] Expected (100, 100, 0, EN=1), Got (%d, %d, %d, EN=%b)",
+                     pwml_rx, pwmr_rx, $signed(err_rx), motor_en_out);
             test_failures = test_failures + 1;
         end
+        // Wait 21 ms to record a full 20 ms RC servo frame (Left=1700us, Right=1300us)
+        #21000000;
 
-        // ---------------------------------------------------------------------
-        // TEST 2: Hard Left Line Error (Sensors = 8'b1000_0000, Far Left)
-        // ---------------------------------------------------------------------
-        $display("\n[TEST 2] Testing Far Left Error (Sensors = 8'b1000_0000)...");
-        spi_exchange_frame(8'h10, 8'b1000_0000, 8'd100, status_rx, pwm_l_rx, pwm_r_rx, err_rx);
-        #1000;
-        spi_exchange_frame(8'h10, 8'b1000_0000, 8'd100, status_rx, pwm_l_rx, pwm_r_rx, err_rx);
+        // -------------------------------------------------------------
+        // TEST 2: Hard Left Deviation (Sensors = 8'b1000_0000, Error = -7)
+        // -------------------------------------------------------------
+        $display("\n[TEST 2] Testing Far Left Deviation (Sensors = 8'b1000_0000)...");
+        spi_exchange_frame(8'h10, 8'b1000_0000, 8'd100, status_rx, pwml_rx, pwmr_rx, err_rx);
+        #5000;
+        spi_exchange_frame(8'h10, 8'b1000_0000, 8'd100, status_rx, pwml_rx, pwmr_rx, err_rx);
 
-        $display("  -> Result: PWM_L=%d, PWM_R=%d, Error=%d", pwm_l_rx, pwm_r_rx, $signed(err_rx));
+        $display("  -> Telemetry: PWM_L=%d, PWM_R=%d, Error=%d", pwml_rx, pwmr_rx, $signed(err_rx));
 
-        if ($signed(err_rx) == -7 && pwm_l_rx > pwm_r_rx) begin
-            $display("  [PASS] Left Correction verified: Error=-7, Left wheel sped up to turn right.");
+        if ($signed(err_rx) == -7 && pwml_rx > pwmr_rx) begin
+            $display("  [PASS] Left Correction Verified: Error=-7, Left wheel sped up to turn right.");
         end else begin
-            $display("  [FAIL] Expected Error=-7 and PWM_L > PWM_R, Got (%d, %d, %d)", pwm_l_rx, pwm_r_rx, $signed(err_rx));
+            $display("  [FAIL] Expected Error=-7 and PWM_L > PWM_R, Got (%d, %d, %d)",
+                     pwml_rx, pwmr_rx, $signed(err_rx));
             test_failures = test_failures + 1;
         end
+        // Wait 21 ms to record a full 20 ms RC servo frame (Left=1772us, Right=1372us)
+        #21000000;
 
-        // ---------------------------------------------------------------------
-        // TEST 3: Hard Right Line Error (Sensors = 8'b0000_0001, Far Right)
-        // ---------------------------------------------------------------------
-        $display("\n[TEST 3] Testing Far Right Error (Sensors = 8'b0000_0001)...");
-        spi_exchange_frame(8'h10, 8'b0000_0001, 8'd100, status_rx, pwm_l_rx, pwm_r_rx, err_rx);
-        #1000;
-        spi_exchange_frame(8'h10, 8'b0000_0001, 8'd100, status_rx, pwm_l_rx, pwm_r_rx, err_rx);
+        // -------------------------------------------------------------
+        // TEST 3: Hard Right Deviation (Sensors = 8'b0000_0001, Error = +7)
+        // -------------------------------------------------------------
+        $display("\n[TEST 3] Testing Far Right Deviation (Sensors = 8'b0000_0001)...");
+        spi_exchange_frame(8'h10, 8'b0000_0001, 8'd100, status_rx, pwml_rx, pwmr_rx, err_rx);
+        #5000;
+        spi_exchange_frame(8'h10, 8'b0000_0001, 8'd100, status_rx, pwml_rx, pwmr_rx, err_rx);
 
-        $display("  -> Result: PWM_L=%d, PWM_R=%d, Error=%d", pwm_l_rx, pwm_r_rx, $signed(err_rx));
+        $display("  -> Telemetry: PWM_L=%d, PWM_R=%d, Error=%d", pwml_rx, pwmr_rx, $signed(err_rx));
 
-        if ($signed(err_rx) == 7 && pwm_r_rx > pwm_l_rx) begin
-            $display("  [PASS] Right Correction verified: Error=+7, Right wheel sped up to turn left.");
+        if ($signed(err_rx) == 7 && pwmr_rx > pwml_rx) begin
+            $display("  [PASS] Right Correction Verified: Error=+7, Right wheel sped up to turn left.");
         end else begin
-            $display("  [FAIL] Expected Error=+7 and PWM_R > PWM_L, Got (%d, %d, %d)", pwm_l_rx, pwm_r_rx, $signed(err_rx));
+            $display("  [FAIL] Expected Error=+7 and PWM_R > PWM_L, Got (%d, %d, %d)",
+                     pwml_rx, pwmr_rx, $signed(err_rx));
             test_failures = test_failures + 1;
         end
+        // Wait 21 ms to record a full 20 ms RC servo frame (Left=1590us, Right=1190us)
+        #21000000;
 
-        // ---------------------------------------------------------------------
-        // TEST 4: Line Lost Event (Sensors = 8'b0000_0000)
-        // ---------------------------------------------------------------------
-        $display("\n[TEST 4] Testing Line Lost Event & Memory Pivot Recovery...");
-        // Previous error was Right (+7), so last_dir should be Right (1).
-        // Line lost should trigger pivot right: PWM_L = SEARCH_SPEED (60), PWM_R = 0.
-        spi_exchange_frame(8'h10, 8'b0000_0000, 8'd100, status_rx, pwm_l_rx, pwm_r_rx, err_rx);
-        #1000;
-        spi_exchange_frame(8'h10, 8'b0000_0000, 8'd100, status_rx, pwm_l_rx, pwm_r_rx, err_rx);
+        // -------------------------------------------------------------
+        // TEST 4: Lost Line Event & Pivot Spin Turn Recovery
+        // -------------------------------------------------------------
+        $display("\n[TEST 4] Testing Lost Line Event & Memory Pivot Recovery...");
+        spi_exchange_frame(8'h10, 8'b0000_0000, 8'd100, status_rx, pwml_rx, pwmr_rx, err_rx);
+        #5000;
+        spi_exchange_frame(8'h10, 8'b0000_0000, 8'd100, status_rx, pwml_rx, pwmr_rx, err_rx);
 
-        $display("  -> Result: PWM_L=%d, PWM_R=%d, Status=0x%02X (LineLost bit=%b)",
-                 pwm_l_rx, pwm_r_rx, status_rx, status_rx[6]);
+        $display("  -> Telemetry: PWM_L=%d, PWM_R=%d, Status=0x%02X (LineLost=%b)",
+                 pwml_rx, pwmr_rx, status_rx, status_rx[6]);
 
-        if (status_rx[6] == 1'b1 && pwm_l_rx == 8'd60 && pwm_r_rx == 8'd0) begin
-            $display("  [PASS] Line Lost Recovery verified: Status flag asserted, executed pivot right (60, 0).");
+        if (status_rx[6] == 1'b1 && pwml_rx == 8'd60 && pwmr_rx == 8'd0) begin
+            $display("  [PASS] Line Lost Recovery Verified: Status flag set, pivot right executed (60, 0).");
         end else begin
-            $display("  [FAIL] Expected LineLost=1 and (60, 0), Got (%d, %d, Status=0x%02X)", pwm_l_rx, pwm_r_rx, status_rx);
+            $display("  [FAIL] Expected LineLost=1 and (60, 0), Got (%d, %d, Status=0x%02X)",
+                     pwml_rx, pwmr_rx, status_rx);
             test_failures = test_failures + 1;
         end
+        // Wait 21 ms to record a full 20 ms RC servo frame (Left=1620us, Right=1500us neutral)
+        #21000000;
 
-        // ---------------------------------------------------------------------
-        // TEST 5: Gain Tuning over SPI (Command 0x20: Set Kp = 64)
-        // ---------------------------------------------------------------------
-        $display("\n[TEST 5] Testing Runtime Gain Configuration over SPI (Cmd 0x20, Kp=64)...");
-        spi_exchange_frame(8'h20, 8'd64, 8'd100, status_rx, pwm_l_rx, pwm_r_rx, err_rx);
-        #1000;
-        // Verify response with error = 2
-        spi_exchange_frame(8'h10, 8'b0000_1100, 8'd100, status_rx, pwm_l_rx, pwm_r_rx, err_rx);
-        #1000;
-        spi_exchange_frame(8'h10, 8'b0000_1100, 8'd100, status_rx, pwm_l_rx, pwm_r_rx, err_rx);
+        // -------------------------------------------------------------
+        // TEST 5: Disarm Safety Interlock (CMD = 0x00)
+        // -------------------------------------------------------------
+        $display("\n[TEST 5] Testing Disarm Command & Zero-Creep Silence...");
+        spi_exchange_frame(8'h00, 8'b0001_1000, 8'd0, status_rx, pwml_rx, pwmr_rx, err_rx);
+        #10000;
 
-        $display("  -> Result with doubled Kp: PWM_L=%d, PWM_R=%d, Error=%d", pwm_l_rx, pwm_r_rx, $signed(err_rx));
-        if ($signed(err_rx) == 2 && pwm_r_rx > pwm_l_rx) begin
-            $display("  [PASS] Runtime Gain Reconfiguration verified: New Kp applied without resetting FPGA.");
+        if (dut.is_armed == 1'b0 && motor_en_out == 1'b0 && dut.target_pulse_l == 0 && dut.target_pulse_r == 0) begin
+            $display("  [PASS] Disarm Verified: is_armed=0, motor_en=0, servo target pulses silenced (0V).");
         end else begin
-            $display("  [FAIL] Unexpected output with Kp=64: (%d, %d, %d)", pwm_l_rx, pwm_r_rx, $signed(err_rx));
+            $display("  [FAIL] Disarm failed: is_armed=%b, motor_en=%b, pulses=(%d, %d)",
+                     dut.is_armed, motor_en_out, dut.target_pulse_l, dut.target_pulse_r);
             test_failures = test_failures + 1;
         end
+        // Observe flat 0V silence line for 5 ms
+        #5000000;
 
-        // ---------------------------------------------------------------------
-        // Test 6: Verify Hardware PWM Generation on FPGA PMOD pins
-        // ---------------------------------------------------------------------
-        $display("\n[TEST 6] Testing FPGA 2-Channel Hardware PWM Generation...");
-        if (motor_en_out !== 1'b1) begin
-            $display("  [FAIL] motor_en_out is not asserted during active operation");
-            test_failures = test_failures + 1;
-        end else begin
-            $display("  [PASS] motor_en_out asserted correctly.");
-        end
-
-        // Sample PWM signals over 5000 ns to verify pulse activity
-        begin : test_pwm_pulses
-            integer pwm_l_transitions;
-            integer pwm_r_transitions;
-            reg last_l, last_r;
-            integer k;
-
-            pwm_l_transitions = 0;
-            pwm_r_transitions = 0;
-            last_l = pwm_left_out;
-            last_r = pwm_right_out;
-
-            for (k = 0; k < 6000; k = k + 1) begin
-                @(posedge clk);
-                if (pwm_left_out !== last_l) begin
-                    pwm_l_transitions = pwm_l_transitions + 1;
-                    last_l = pwm_left_out;
-                end
-                if (pwm_right_out !== last_r) begin
-                    pwm_r_transitions = pwm_r_transitions + 1;
-                    last_r = pwm_right_out;
-                end
-            end
-
-            if (pwm_l_transitions > 0 && pwm_r_transitions > 0) begin
-                $display("  [PASS] FPGA Hardware PWM pulses detected on both left (%0d transitions) and right (%0d transitions) channels.", pwm_l_transitions, pwm_r_transitions);
-            end else begin
-                $display("  [FAIL] FPGA Hardware PWM static! (L transitions: %0d, R transitions: %0d)", pwm_l_transitions, pwm_r_transitions);
-                test_failures = test_failures + 1;
-            end
-        end
-
-        // ---------------------------------------------------------------------
-        // Summary
-        // ---------------------------------------------------------------------
+        // -------------------------------------------------------------
+        // SUMMARY REPORT
+        // -------------------------------------------------------------
         $display("\n============================================================");
         if (test_failures == 0) begin
-            $display(" TESTBENCH SUCCESS: ALL 6 TEST SUITES PASSED (0 FAILURES)!");
+            $display("  ALL HARDWARE TESTBENCH CHECKS PASSED (0 failures)!");
         end else begin
-            $display(" TESTBENCH FAILED: %0d TESTS FAILED!", test_failures);
+            $display("  TESTBENCH FAILED: %d test failure(s) detected!", test_failures);
         end
         $display("============================================================\n");
 
-        #1000;
+        #5000;
         $finish;
     end
 

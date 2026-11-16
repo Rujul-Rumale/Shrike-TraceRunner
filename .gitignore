@@ -15,6 +15,12 @@ build/
 *.bin
 *.hex
 *.elf
+*.lnk
+
+# Renesas Go Configure Hub build & intermediate files
+Go/**/build/
+Go/**/full-chip-simulation-models/
+Go/Shrike-Trace/
 
 # IDE & OS files
 .vscode/
@@ -28,4 +34,5 @@ Thumbs.db
 # Scratch scripts
 scratch_*.py
 trace_*.py
+
 
