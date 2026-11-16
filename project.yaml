@@ -1,0 +1,20 @@
+name: shrike_tracerunner
+title: "Shrike-TraceRunner: FPGA-Primary PID Line Follower"
+author: Rujul Rajeev Rumale
+github: Rujul-Rumale
+boards:
+  - shrike-fi
+uses_fpga: true
+tags:
+  - fpga
+  - verilog
+  - pid
+  - robotics
+  - line-follower
+  - servo
+  - esp32s3
+description: >
+  FPGA-primary autonomous line-following robot on the Vicharak Shrike-Fi
+  (ESP32-S3 + Renesas ForgeFPGA SLG47910). Features a 2-stage pipelined
+  discrete fixed-point PID controller, 50 Hz continuous rotation RC servo
+  pulse engine, 50 ms SPI watchdog failsafe, and 1 kHz full-duplex telemetry.
